@@ -150,13 +150,15 @@ def start_data_loader_process(
                 continue
             except Exception as e:
                 shutdown_event.set()
+                pool.close()
                 raise e
 
             semaphore.release()
             for encoded_batch in msgpack.unpackb(data):
                 enqueue(shutdown_event, batch_queue, encoded_batch)
 
-    print('Bruh')
+    # Honestly idk if this can be reached
+    print('Bruh how\'d you get here?')
     shutdown_event.set()
 
 
