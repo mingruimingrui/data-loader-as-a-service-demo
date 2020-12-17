@@ -25,7 +25,8 @@ def main():
         subparser = subparsers.add_parser(
             subcommand,
             help=module.__doc__,
-            formatter_class=argparse.ArgumentDefaultsHelpFormatter
+            conflict_handler='resolve',
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         )
         module.add_options(subparser)
 
