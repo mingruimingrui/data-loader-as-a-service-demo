@@ -1,104 +1,121 @@
+import argparse
 import json
-import msgpack
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
 
+import msgpack
 import numpy as np
+import torch
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
 int64_byte_size = np.dtype(np.int64).itemsize
 bool_byte_size = np.dtype(np.bool).itemsize
 
 
 @dataclass
-class BatchForLanguageModeling:
-    """An input batch for language modeling training and inference."""
+class Batch:
+    """An input batch for transformer input."""
 
-    idxs: np.ndarray
-    texts: List[str]
-    input_ids: np.ndarray
-    attention_mask: np.ndarray
-    labels: Optional[np.ndarray] = None
+    texts: List[str] = field(metadata={'help': 'List of original texts'})
+    idxs: np.ndarray = field(metadata={'help': 'Position of text'})
+    input_ids: np.ndarray = field(metadata={
+        'help': 'texts formed into input tensor'
+    })
+    attention_mask: np.ndarray = field(metadata={
+        'help': 'Attention mask for position of non-special tokens'
+    })
+    labels: Optional[np.ndarray] = field(default=None, metadata={
+        'help': 'Prediction labels for model training.'
+    })
 
-    def to_bytes(self) -> bytes:
-        """Binarize a batch into bytes in an efficient manner.
+    __model_input_types__ = {
+        'input_ids': torch.LongTensor,
+        'attention_mask': torch.FloatTensor,
+        'labels': torch.LongTensor,
+    }
 
-        I could have used pickle but pickling numpy arrays and tensors
-        is extremely inefficient.
-        There are better ways to write this but here I want to have the ease of
-        interpretation.
-        You shouldn't have to to reference anything else.
-        """
-        batch_size, seq_len = self.input_ids.shape
-        texts_data = msgpack.packb(self.texts)
-        meta = {
-            'shape': [int(batch_size), int(seq_len)],
-            'texts_size': len(texts_data),
-            'has_label': self.labels is not None,
+    def to_model_inputs(
+        self,
+        device: Optional[torch.device] = None
+    ) -> Dict[str, torch.Tensor]:
+        """Converts batch into a dictionary ready for use in model."""
+        return {
+            dtype(getattr(self, name)).to(device)
+            for name, dtype in self.__model_input_types__.items()
+            if getattr(self, name) is not None
         }
 
-        data = [
-            (json.dumps(meta) + '\n').encode('utf-8'),
-            self.idxs.astype(np.int64).tobytes(),
-            texts_data,
-            self.input_ids.astype(np.int64).tobytes(),
-            self.attention_mask.astype(np.bool).tobytes(),
-        ]
-        if self.labels is not None:
-            data.append(self.labels.astype(np.int64).tobytes())
+    def to_bytes(self) -> bytes:
+        """Binarize a batch into bytes in an efficient manner."""
+        metas = []
+        datas = []
+        for name, value in vars(self).items():
+            # Attributes beginning with _ are assumed to be static variables
+            if name.startswith('_'):
+                continue
 
-        return b''.join(data)
+            # Also skip if field is empty
+            if value is None:
+                continue
+
+            # We binarizae arrays and other data types differently
+            if isinstance(value, np.ndarray):
+                data = value.tobytes()
+                metas.append({
+                    'name': name,
+                    'is_array': True,
+                    'size': len(data),
+                    'dtype': value.dtype.name,
+                    'shape': value.shape,
+                    'count': value.size,
+                })
+                datas.append(data)
+
+            else:
+                # Does msgpack always work? Probably not but we only have
+                # to handle texts at the moment.
+                data = msgpack.packb(value)
+                metas.append({
+                    'name': name,
+                    'is_array': False,
+                    'size': len(data),
+                })
+                datas.append(data)
+
+        # Binarize metas and prepend to datas
+        datas = [(json.dumps(metas) + '\n').encode()] + datas
+        return b''.join(datas)
 
     @classmethod
     def from_bytes(cls, data: bytes):
-        """Decode bytes into a BatchForLanguageModeling.
-
-        I could have used pickle but pickling numpy arrays and tensors
-        is extremely inefficient.
-        There are better ways to write this but here I want to have the ease of
-        interpretation.
-        You shouldn't have to to reference anything else.
-        """
+        """Decode bytes into a Batch."""
         offset = data.find(b'\n')
-        meta = json.loads(data[:offset])
-
-        batch_size, seq_len = meta['shape']
-        tensor_size = batch_size * seq_len
+        metas = json.loads(data[:offset])
         offset += 1
 
-        idxs = np.frombuffer(data, np.int64, batch_size, offset)
-        offset += int64_byte_size * batch_size
+        kwargs = {}
+        for meta in metas:
+            if meta['is_array']:
+                value = np.frombuffer(
+                    data,
+                    dtype=meta['dtype'],
+                    count=meta['count'],
+                    offset=offset
+                ).reshape(meta['shape']).copy()
 
-        texts = msgpack.unpackb(data[offset:offset + meta['texts_size']])
-        offset += meta['texts_size']
+            else:
+                value = msgpack.unpackb(data[offset:offset + meta['size']])
 
-        input_ids = np.frombuffer(data, np.int64, tensor_size, offset)
-        offset += int64_byte_size * tensor_size
+            kwargs[meta['name']] = value
+            offset += meta['size']
 
-        attention_mask = np.frombuffer(data, np.bool, tensor_size, offset)
-        offset += bool_byte_size * tensor_size
-
-        batch = cls(
-            idxs=idxs.copy(),
-            texts=texts,
-            input_ids=input_ids.reshape(batch_size, seq_len).copy(),
-            attention_mask=attention_mask.reshape(batch_size, seq_len).copy(),
-        )
-
-        if meta['has_label']:
-            batch.labels = np.frombuffer(
-                data,
-                dtype=np.int64,
-                count=tensor_size,
-                offset=offset,
-            ).reshape(batch_size, seq_len).copy()
-
-        return batch
+        return cls(**kwargs)
 
 
 @dataclass
 class BatcherForLanguageModeling:
-    """For transforming a list of texts into BatchForLanguageModeling."""
+    """For transforming a list of texts into Batch."""
 
     tokenizer: PreTrainedTokenizerBase
     do_optimal_batching: bool = True
@@ -106,6 +123,7 @@ class BatcherForLanguageModeling:
     max_seq_len: int = 0
     max_batch_size: int = 44 * 2
     max_batch_tokens: int = 44 * 128
+
     mlm: bool = True
     mlm_probability: float = 0.15
     mask_probability: float = 0.8
@@ -123,7 +141,62 @@ class BatcherForLanguageModeling:
                 'for masked language modeling.'
             )
 
-    def __call__(self, texts: List[str]) -> List[BatchForLanguageModeling]:
+    @staticmethod
+    def add_options(
+        parser: argparse.ArgumentParser
+    ) -> argparse.ArgumentParser:
+        parser.add_argument(
+            '--tokenizer-path', required=True,
+            help='Path to saved PretrainedTokenizer.')
+
+        # Batching configs
+        batching_group = parser.add_argument_group('Batching Options')
+        batching_group.add_argument(
+            '--do-optimal-batching', action='store_true',
+            help='Batch by sequence length to minimize padding token.')
+        batching_group.add_argument(
+            '--min-seq-len', type=int, default=1,
+            help='Minimum sequence length.')
+        batching_group.add_argument(
+            '--max-seq-len', type=int, default=128,
+            help='Maximum sequence length.')
+        batching_group.add_argument(
+            '--max-batch-size', type=int, default=88,
+            help='Maximum number of entries per batch.')
+        batching_group.add_argument(
+            '--max-batch-tokens', type=int, default=int(88 * 128 / 8),
+            help='Maximum number of tokens per batch.')
+
+        # Augmentation configs
+        augmentation_group = parser.add_argument_group('Augmentation Options')
+        augmentation_group.add_argument(
+            '--mlm-probability', type=float, default=0.15,
+            help='Probability of token masked.')
+        augmentation_group.add_argument(
+            '--mask-probability', type=float, default=0.8,
+            help='Probability of replacing with mask token.')
+        augmentation_group.add_argument(
+            '--random-probability', type=float, default=0.5,
+            help='Probability of replacing with random token.')
+
+        return parser
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace, **kwargs):
+        return BatcherForLanguageModeling(
+            PreTrainedTokenizerFast.from_pretrained(args.tokenizer_path),
+            do_optimal_batching=args.do_optimal_batching,
+            min_seq_len=args.min_seq_len,
+            max_seq_len=args.max_seq_len,
+            max_batch_size=args.max_batch_size,
+            max_batch_tokens=args.max_batch_tokens,
+            mlm_probability=args.mlm_probability,
+            mask_probability=args.mask_probability,
+            random_probability=args.random_probability,
+            **kwargs,
+        )
+
+    def __call__(self, texts: List[str]) -> List[Batch]:
         # Encode texts and sort if needed
         encoded_texts = []
         for idx, text in enumerate(texts):
@@ -161,7 +234,7 @@ class BatcherForLanguageModeling:
     def _form_batch(
         self,
         encoded_texts: List[Tuple[int, str, List[int]]]
-    ) -> BatchForLanguageModeling:
+    ) -> Batch:
         longest_seq_len = max(map(lambda x: len(x[2]), encoded_texts))
         idxs = []
         texts = []
@@ -178,7 +251,7 @@ class BatcherForLanguageModeling:
             input_ids[i, :len(encoding)] = encoding
             attention_mask[i, :len(encoding)] = True
 
-        batch = BatchForLanguageModeling(
+        batch = Batch(
             idxs=np.array(idxs, dtype=np.int64),
             texts=texts,
             input_ids=input_ids,
@@ -192,8 +265,8 @@ class BatcherForLanguageModeling:
 
     def _mask_batch(
         self,
-        batch: BatchForLanguageModeling
-    ) -> BatchForLanguageModeling:
+        batch: Batch
+    ) -> Batch:
         # Determine locations of labels and initialize
         shape = batch.input_ids.shape
         masked_indices = np.random.rand(*shape) < self.mlm_probability
