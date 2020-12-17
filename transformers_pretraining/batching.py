@@ -146,7 +146,7 @@ class BatcherForLanguageModeling:
         parser: argparse.ArgumentParser
     ) -> argparse.ArgumentParser:
         parser.add_argument(
-            '--tokenizer-path', required=True,
+            '-t', '--tokenizer-path', required=True,
             help='Path to saved PretrainedTokenizer.')
 
         # Batching configs
