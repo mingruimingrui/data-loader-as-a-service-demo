@@ -12,6 +12,8 @@ class CachedGenerator:
     The problem with this wrapper is that it's not exactly efficient.
     The expected use cases are mostly for generators with low generation rates
     (< 10k/s) and even lower consumption rates (< 3k/s).
+
+    This class is also not written in a thread safe manner.
     """
 
     def __init__(self, generator: GeneratorType, cache_size: int = 2):
@@ -31,6 +33,14 @@ class CachedGenerator:
         self.worker = threading.Thread(target=fill_cache)
         self.worker.setDaemon(True)
         self.worker.start()
+
+    def qsize(self):
+        return self.cache.qsize()
+
+    def peek(self):
+        if self.qsize() == 0:
+            raise RuntimeError()
+        return self.cache.queue[0]
 
     def close(self):
         self.shutdown_event.set()
