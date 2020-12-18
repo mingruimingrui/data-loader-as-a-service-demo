@@ -17,7 +17,7 @@ from transformers.training_args import TrainingArguments
 from transformers_pretraining.batching import Batch
 
 
-def remove_file_or_dir(path):
+def remove_file_or_dir(path: str):
     if not os.path.exists(path):
         return
     if os.path.isfile():
