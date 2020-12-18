@@ -2,7 +2,7 @@
 
 import argparse
 import json
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import torch
 from transformers.models.roberta.configuration_roberta import RobertaConfig
@@ -87,7 +87,16 @@ def load_batches(
     return batcher(texts)
 
 
-def _main(args: argparse.Namespace):
+def main(args: Union[argparse.Namespace, List[str], None] = None):
+    if not isinstance(args, argparse.Namespace):
+        parser = argparse.ArgumentParser(
+            description=__doc__,
+            conflict_handler='resolve',
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        )
+        add_options(parser)
+        args = parser.parse_args(args)
+
     assert torch.cuda.is_available(), 'Don\'t even try using CPU for this.'
 
     train_args = load_training_arguments(
@@ -112,16 +121,6 @@ def _main(args: argparse.Namespace):
         eval_batches=eval_batches,
     )
     trainer.train()
-
-
-def main(argv: Optional[List[str]] = None):
-    parser = argparse.ArgumentParser(
-        description='Pre-training LM using roberta method.',
-        conflict_handler='resolve',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    add_options(parser)
-    _main(parser.parse_args(argv))
 
 
 if __name__ == "__main__":
