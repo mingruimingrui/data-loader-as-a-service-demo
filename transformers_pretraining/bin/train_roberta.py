@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import warnings
 from typing import List, Optional, Tuple, Union
 
 import torch
@@ -51,6 +52,17 @@ def load_training_arguments(
     if filepath is not None:
         with open(filepath, 'r') as f:
             train_args_dict.update(json.load(f))
+
+    ignore_fields = [
+        'per_device_train_batch_size',
+        'per_device_eval_batch_size',
+        'per_gpu_train_batch_size',
+        'per_gpu_eval_batch_size',
+    ]
+    for field in ignore_fields:
+        if field in train_args_dict:
+            warnings.warn(f'{field} will be ignored')
+
     train_args_dict['local_rank'] = local_rank
     return TrainingArguments(**train_args_dict)
 
@@ -97,12 +109,13 @@ def main(args: Union[argparse.Namespace, List[str], None] = None):
         add_options(parser)
         args = parser.parse_args(args)
 
-    assert torch.cuda.is_available(), 'Don\'t even try using CPU for this.'
-
     train_args = load_training_arguments(
         local_rank=args.local_rank,
         filepath=args.training_args,
     )
+
+    assert torch.cuda.is_available() and not train_args.no_cuda, \
+        'Don\'t even try using CPU for this.'
 
     tokenizer, model = load_tokenizer_and_model(
         tokenizer_path=args.tokenizer_path,
