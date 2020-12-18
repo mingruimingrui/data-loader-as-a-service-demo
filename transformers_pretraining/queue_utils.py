@@ -10,7 +10,7 @@ def enqueue(
     context: threading.Event,
     queue: Queue,
     item: object,
-    timeout: float = 0.05
+    timeout: float = 0.005
 ):
     while not context.is_set():
         try:
@@ -22,7 +22,7 @@ def enqueue(
 def dequeue(
     context: threading.Event,
     queue: Queue,
-    timeout: float = 0.05
+    timeout: float = 0.005
 ) -> object:
     while not context.is_set():
         try:
