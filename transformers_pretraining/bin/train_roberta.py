@@ -87,7 +87,7 @@ def load_batches(
     return batcher(texts)
 
 
-def main(args: argparse.Namespace):
+def _main(args: argparse.Namespace):
     assert torch.cuda.is_available(), 'Don\'t even try using CPU for this.'
 
     train_args = load_training_arguments(
@@ -114,7 +114,15 @@ def main(args: argparse.Namespace):
     trainer.train()
 
 
+def main(argv: Optional[List[str]] = None):
+    parser = argparse.ArgumentParser(
+        description='Pre-training LM using roberta method.',
+        conflict_handler='resolve',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    add_options(parser)
+    _main(parser.parse_args(argv))
+
+
 if __name__ == "__main__":
-    main(add_options(argparse.ArgumentParser(
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )).parse_args())
+    main()

@@ -1,14 +1,13 @@
 """Start the data loader service."""
 
 import argparse
-import atexit
 import multiprocessing
 import os
 import random
 import threading
 import time
 from queue import Queue
-from typing import List
+from typing import List, Optional
 
 import msgpack
 from fastapi import FastAPI, Response
@@ -202,7 +201,21 @@ def make_app(args: argparse.Namespace):
     return app, on_shutdown_event
 
 
-def main(args: argparse.Namespace):
+def _main(args: argparse.Namespace):
     app, on_shutdown_event = make_app(args)
     run_app(app, port=args.port, log_level='warning')
     on_shutdown_event()
+
+
+def main(argv: Optional[List[str]] = None):
+    parser = argparse.ArgumentParser(
+        description='Start data loader service for transformer pretraining.',
+        conflict_handler='resolve',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    add_options(parser)
+    _main(parser.parse_args(argv))
+
+
+if __name__ == "__main__":
+    main()
