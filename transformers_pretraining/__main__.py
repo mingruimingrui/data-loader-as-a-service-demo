@@ -32,7 +32,7 @@ def main():
 
     args = parser.parse_args()
     module = SUBCOMMANDS[args.subcommand]
-    module.main(args)
+    module._main(args)
 
 
 if __name__ == "__main__":
