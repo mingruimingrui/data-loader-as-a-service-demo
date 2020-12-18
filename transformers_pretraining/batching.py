@@ -161,10 +161,10 @@ class BatcherForLanguageModeling:
             '--max-seq-len', type=int, default=128,
             help='Maximum sequence length.')
         batching_group.add_argument(
-            '--max-batch-size', type=int, default=88,
+            '--max-batch-size', type=int, default=176,
             help='Maximum number of entries per batch.')
         batching_group.add_argument(
-            '--max-batch-tokens', type=int, default=int(88 * 128 / 8),
+            '--max-batch-tokens', type=int, default=int(176 * 128 / 8),
             help='Maximum number of tokens per batch.')
 
         # Augmentation configs
