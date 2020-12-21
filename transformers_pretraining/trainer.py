@@ -15,6 +15,7 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers.training_args import TrainingArguments
 
 from transformers_pretraining.batching import Batch
+from transformers_pretraining.cached_generator import CachedGenerator
 
 
 def remove_file_or_dir(path: str):
@@ -77,6 +78,7 @@ class TrainerForMaskedLM:
             'Trainer would handle wrapping of model in DDP for you. '
             'Don\'t pre-wrap so I won\'t have to write integration code.'
         )
+        model = model.to(args.device)
 
         self.model = model
         self.args = args
@@ -85,7 +87,8 @@ class TrainerForMaskedLM:
         self.eval_batches = eval_batches
         self.optimizer, self.lr_scheduler = optimizers
 
-        self._init_optimizer_and_lr_scheduler()
+        self.init_optimizer_and_lr_scheduler()
+        self.batch_generator = CachedGenerator(self.make_batch_generator())
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.args.fp16)
 
         self.is_distributed = torch.distributed.is_initialized()
@@ -108,7 +111,7 @@ class TrainerForMaskedLM:
         self.ministep_pbar: Optional[tqdm] = None
         self.writer: Optional[SummaryWriter] = None
 
-    def _init_optimizer_and_lr_scheduler(self):
+    def init_optimizer_and_lr_scheduler(self):
         no_decay = ["bias", "LayerNorm.weight"]
         optimizer_grouped_parameters = [
             {
@@ -134,16 +137,18 @@ class TrainerForMaskedLM:
                 betas=(self.args.adam_beta1, self.args.adam_beta2),
                 eps=self.args.adam_epsilon,
             )
-        if self.lr_schedular is None:
+        if self.lr_scheduler is None:
             self.lr_scheduler = get_linear_schedule_with_warmup(
                 optimizer=self.optimizer,
                 num_warmup_steps=self.args.warmup_steps,
                 num_training_steps=self.args.max_steps,
             )
 
-    def query_batch(self) -> Batch:
-        data = requests.get(self.dataset_host, stream=True).content
-        return Batch.from_bytes(data)
+    def make_batch_generator(self):
+        while True:
+            data = requests.get(self.dataset_host, stream=True).content
+            batch = Batch.from_bytes(data)
+            yield batch
 
     def save_model(self, step_nb: int):
         os.makedirs(self.args.output_dir, exist_ok=True)
@@ -152,7 +157,7 @@ class TrainerForMaskedLM:
         optimizer_save_path = f'{prefix}.optimizer.pt'
 
         self.model.save_pretrained(model_save_path)
-        torch.save(optimizer_save_path)
+        torch.save(self.optimizer, optimizer_save_path)
 
         self.checkpoint_files.append((model_save_path, optimizer_save_path))
         save_total_limit = self.args.save_total_limit
@@ -169,7 +174,7 @@ class TrainerForMaskedLM:
 
             self.checkpoint_files = files_to_keep
 
-    def load_metrics(self, step_nb: int, step_metrics: StepMetrics):
+    def log_metrics(self, step_nb: int, step_metrics: StepMetrics):
         if self.writer is None:
             return
 
@@ -251,7 +256,7 @@ class TrainerForMaskedLM:
 
     def ministep(self) -> Tuple[Batch, Optional[MaskedLMOutput], bool]:
         """Ministep is for computing and accumulating the gradients."""
-        batch = self.query_batch()
+        batch = next(self.batch_generator)
         model_inputs = batch.to_model_inputs(self.args.device)
         model = self.model if self.ddp_model is None else self.ddp_model
 
@@ -277,13 +282,17 @@ class TrainerForMaskedLM:
         self,
         step_metrics: StepMetrics,
         batch: Batch,
-        model_output: Optional[MaskedLMOutput]
+        model_output: Optional[MaskedLMOutput],
+        oom: bool,
     ):
         """Ministep callback accumulates metrics."""
         if self.ministep_pbar is not None:
             self.ministep_pbar.update(1)
 
-        if model_output is None:
+        if oom:
+            step_metrics.n_oom += 1
+
+        elif model_output is None:
             step_metrics.n_nan_loss += 1
 
         else:
@@ -298,11 +307,11 @@ class TrainerForMaskedLM:
         step_metrics = StepMetrics()
         if self.ministep_pbar is not None:
             self.ministep_pbar.reset()
-            self.ministep_pbar.set_description(f'Step: {step_nb}')
+            self.ministep_pbar.set_description(f'Step {step_nb}')
 
         # Pre-gradient accumulation setting up
         self.optimizer.zero_grad()
-        self.cuda.empty_cache()
+        torch.cuda.empty_cache()
 
         # Accumulate gradients
         if self.ddp_model is not None:
@@ -339,24 +348,24 @@ class TrainerForMaskedLM:
             self.save_model(step_nb)
 
         if should_log_step and self.writer is not None:
-            self.load_metrics(step_nb, step_metrics)
+            self.log_metrics(step_nb, step_metrics)
 
         if (
             should_eval_step and
             self.eval_batches is not None and
             self.writer is not None
         ):
-            self.eval(step_nb, step_metrics)
+            self.eval(step_nb)
 
-    def train(self, model: PreTrainedModel):
+    def train(self):
         if self.is_main_thread:
-            self.pbar = tqdm(total=self.args.max_steps)
+            self.pbar = tqdm(desc='Training', total=self.args.max_steps)
             self.ministep_pbar = \
                 tqdm(total=self.args.gradient_accumulation_steps)
             self.writer = SummaryWriter(self.args.logging_dir)
 
         for step_nb in range(1, self.args.max_steps + 1):
-            step_metrics = self.step()
+            step_metrics = self.step(step_nb)
             self.callback(step_nb, step_metrics)
 
         if self.is_main_thread:
