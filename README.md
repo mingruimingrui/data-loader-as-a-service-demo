@@ -5,16 +5,20 @@ loading as a service comes with itself a number of rather nifty advantages
 and one big disadvantage.
 
 - Makes distributed sampling redundant since there can now be a single souce
-of data generation. This also greatly simplifies the code for writing
-memory-efficient loading of extremely large datasets.
+  of truth. This also greatly simplifies the code for writing
+  memory-efficient loading of extremely large datasets.
 - Under the context of multiple nodes, we can avoid the need to duplicate the
-data on each machine. All our dataset just has to be stored on the machine
-hosting the data loader service.
+  data on each machine. All our dataset just has to be stored on the machine
+  hosting the data loader service.
 
 However by making data loading a service, we have essentially created a
 coupling between processes (from no-coupling to 1 is alot).
 While not necessarily a bad thing, this does make testing, debugging and
 development work a little more tedious by requiring one additional prior step.
+
+Another consideration would possibly be networking.
+With data coming from just a single machine, combined with the relatively large
+size of data, overloading of network bandwith is a very realistic possibility.
 
 ## Getting Started
 
