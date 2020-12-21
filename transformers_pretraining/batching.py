@@ -41,7 +41,7 @@ class Batch:
     ) -> Dict[str, torch.Tensor]:
         """Converts batch into a dictionary ready for use in model."""
         return {
-            dtype(getattr(self, name)).to(device)
+            name: dtype(getattr(self, name)).to(device)
             for name, dtype in self.__model_input_types__.items()
             if getattr(self, name) is not None
         }
