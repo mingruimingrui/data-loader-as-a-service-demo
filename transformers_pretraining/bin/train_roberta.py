@@ -11,7 +11,7 @@ from transformers.models.roberta.modeling_roberta import RobertaForMaskedLM
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 from transformers.training_args import TrainingArguments
 from transformers_pretraining.batching import Batch, BatcherForLanguageModeling
-from transformers_pretraining.trainer import TrainerForMaskedLM
+from transformers_pretraining.trainers import TrainerForMaskedLM
 
 
 def add_options(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
