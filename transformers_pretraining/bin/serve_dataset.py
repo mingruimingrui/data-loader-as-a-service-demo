@@ -18,9 +18,6 @@ from uvicorn.main import run as run_app
 args: argparse.Namespace
 bacher: BatcherForLanguageModeling
 
-# API global variables
-cached_batches: CachedGenerator
-
 
 def add_options(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument(
@@ -100,8 +97,16 @@ def init_cached_batches(
     args: argparse.Namespace,
     tokenizer: PreTrainedTokenizerFast
 ):
-    global cached_batches
+    """This function creates a generator that generates Batch objects.
 
+    In addition to generating batches from text data,
+    this implementation also
+    - offload the heavy lifting of text processing to subprocesses
+    - limit the amount of memory consumed by using semaphore to ensure
+      a maximum amount of lines are loaded into memory at once
+    - perform graceful shutdown by resolving subprocesses and other misc
+      objects manually
+    """
     max_semaphore_value = args.num_workers * 2
     semaphore = threading.Semaphore(max_semaphore_value)
     shutdown_event = threading.Event()
@@ -152,10 +157,15 @@ def init_cached_batches(
         cache_size=args.cache_size
     )
 
+    return cached_batches
+
 
 def make_app(args: argparse.Namespace):
     app = FastAPI()
     tokenizer = PreTrainedTokenizerFast.from_pretrained(args.tokenizer_path)
+
+    # API global variables
+    cached_batches: CachedGenerator
 
     @app.get('/')
     def get_sample():
@@ -164,7 +174,8 @@ def make_app(args: argparse.Namespace):
 
     @app.on_event('startup')
     def on_startup_event():
-        init_cached_batches(args, tokenizer)
+        nonlocal cached_batches
+        cached_batches = init_cached_batches(args, tokenizer)
 
         # Await on first entry and visualize.
         while cached_batches.qsize() == 0:
