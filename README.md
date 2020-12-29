@@ -20,42 +20,47 @@ Another consideration would possibly be networking.
 With data coming from just a single machine, combined with the relatively large
 size of data, overloading of network bandwith is a very realistic possibility.
 
+## File Structure
+
+```
+transformers_pretraining
+├── __init__.py
+├── __main__.py             # Entrypoint to module (contains the main function)
+├── bin
+│   ├── __init__.py
+│   ├── serve_dataset.py    # Script to start data loader service
+│   └── train_roberta.py    # Script to train roberta model
+├── batching.py             # Utility for forming text into batches
+├── cached_generator.py     # Utility for caching generator output
+├── io_utils.py             # Utility for doing I/O
+├── queue_utils.py          # Utility for working with queues
+└── trainers.py             # Custom classes to perform model training
+```
+
 ## Getting Started
 
-### Installation
+### Requirements
 
-This package is set up such that it can be ran as a module from the console.
 Requirements can be found in [`requirements.txt`](./requirements.txt).
 
-```sh
+### Installation (is completely optional)
+
+Because the code is set up such that it can be ran as a module.
+
+```
 python -m transformers_pretraining -h
 ```
 
-Installation is good-to-have but not necessary, you only have to do it
-if you wish to be able to run the code from any directory of your choosing.
-Installation can be done using pip.
+You don't have to install the package at all unless you wish to be able to
+run the code from any directory of your choosing.
 
-```sh
-pip install .
-```
+## Usage
 
-### Usage
-
-The following example pre-trains a roberta model from scratch. You will have
-to provide your own text files and pre-trained huggingface tokenizer.
+### Running the data loader service
 
 The following command starts the data loader service for roberta training.
-
-```sh
-python -m transformers_pretraining serve_dataset \
-    path_to_train_file_1 path_to_train_file_2 ... \
-    --tokenizer path_to_tokenizer \
-    --port port_to_host_on
-```
-
-It is highly recommended to enable optimal batching to reduce amount of
-unnecessary computation.
-To enable said feature, simply use the `--do-optimal-batching` option.
+You will have to provide your own text files and pre-trained huggingface
+tokenizer.
 
 ```sh
 python -m transformers_pretraining serve_dataset \
@@ -65,8 +70,36 @@ python -m transformers_pretraining serve_dataset \
     --do-optimal-batching
 ```
 
-Once the data loader service has started, the training script can be ran.
-Examples of model config and training arguments can be found in
+### Interpreting results from the dataloader service
+
+To keep things minimal, the dataloader service has only one method, `GET /`.
+
+The following script shows how the output from `GET /` can be used.
+
+```python
+import requests
+from transformers_pretraining.batching import Batch
+
+resp = requests.get('http://localhost:5678')
+batch = Batch.from_bytes(resp.content)
+# Where batch has the following fields of interest
+# - texts (List[str]): The original texts used to form the batch
+# - idxs (Array[int] [batch_size]): Original position of each text
+# - input_ids (Array[int] [batch_size, seq_len]): texts but formed into a 2d
+#     tensor ready for model input.
+# - attention_mask (Array[int] [batch_size, seq_len]): Attention mask for
+#     position of non-special tokens.
+# - labels (Array[int] [batch_size, seq_len]): Target labels for masked
+#     language modeling.
+
+# To perform inference with the batch
+model_output = roberta_model(**batch.to_model_inputs(device))
+```
+
+### Running the model training process
+
+The following command can be used to start roberta training.
+Examples of `model_config` and `training_args` can be found in
 [./configs](./configs).
 
 ```sh
@@ -77,19 +110,4 @@ python -m transformers_pretraining \
     --training-args path_to_training_args.json
 ```
 
-To evaluate on validation data, use the `--eval-data-files` option.
-
-```sh
-python -m transformers_pretraining \
-    -c path_to_model_config.json \
-    -d dataset_loader_host:dataset_loader_port \
-    -t path_to_tokenizer \
-    --training-args path_to_training_args.json \
-    --eval-data-files path_to_validation_file
-```
-
 To train on multiple GPUs, use the [torch distributed launch utility](https://pytorch.org/docs/stable/distributed.html#launch-utility).
-
-## Future improvements
-
-- Add a feature to cache batches on inference worker side.
