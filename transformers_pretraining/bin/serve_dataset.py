@@ -165,10 +165,11 @@ def make_app(args: argparse.Namespace):
     tokenizer = PreTrainedTokenizerFast.from_pretrained(args.tokenizer_path)
 
     # API global variables
-    cached_batches: CachedGenerator
+    cached_batches: CachedGenerator = None
 
     @app.get('/')
     def get_sample():
+        assert cached_batches is not None
         data = next(cached_batches)
         return Response(content=data)
 
@@ -188,7 +189,8 @@ def make_app(args: argparse.Namespace):
     @app.on_event('shutdown')
     def on_shutdown_event():
         print('Gracefully shutting down data loading service')
-        cached_batches.close()
+        if cached_batches is not None:
+            cached_batches.close()
 
     return app, on_shutdown_event
 
