@@ -63,6 +63,7 @@ run the code from any directory of your choosing.
 The following command starts the data loader service for roberta training.
 You will have to provide your own text files and pre-trained huggingface
 tokenizer.
+I haven't had plans to support non-local data stores like s3 just yet.
 
 ```sh
 python -m transformers_pretraining serve_dataset \
