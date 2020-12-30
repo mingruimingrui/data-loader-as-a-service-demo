@@ -1,6 +1,8 @@
 
 This repository implements implements data loading as a stand-alone service
-for model training. Under the context of multi-gpu training, having data
+for roberta pre-training.
+
+Under the context of multi-gpu training, having data
 loading as a service comes with itself a number of rather nifty advantages
 and one big disadvantage.
 
